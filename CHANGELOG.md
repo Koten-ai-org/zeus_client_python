@@ -6,6 +6,12 @@
 
 - Zeus HTTP `RetryBudget` on idempotent read verbs (`find`/`get`/`search`/`describe`/`explain`/`traverse`) for transport + HTTP 5xx only (API_ZEUS §6.6). Never 4xx/409/429, never `set`/`pipeline`. Same budget as LLM adapters. Claim stays **candidate**. Not V1 job replan.
 
+### Fixed
+
+- A terminating `return` with a non-empty `summary` is POSTed to `/v2/return`, which Zeus maps to `return_result` and uses to reset the per-login round budget (ZCP-135). An empty summary stays local. A transport error on that post does not fail the turn.
+- HTTP 429 `session_force_closed` drops the cached basic login for that scope and is not retried (ZCP-135).
+- `POST /v2/session` retries on HTTP 409 and HTTP 500 so a same-microsecond id collision can mint again (ZCP-135).
+
 ---
 
 ## 2.4.0 — 2026-09-04

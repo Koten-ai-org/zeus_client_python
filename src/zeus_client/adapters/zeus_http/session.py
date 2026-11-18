@@ -127,9 +127,18 @@ class HttpxSessionClient:
         if rewind:
             payload["rewind"] = True
         h = await self._headers(mode=mode, extra=headers, target=target)
-        return await self._post(
-            url, h, payload, ok_codes=(200, 201), params=rewind_query_params(rewind)
-        )
+        # Zeus mints the id. A same-microsecond collision is HTTP 500 today
+        # and HTTP 409 once the server reports session_id_conflict. Retry
+        # mints a new id. A 400 is the caller's payload and is not retried.
+        last: SessionHttpResult | None = None
+        for _attempt in range(3):
+            last = await self._post(
+                url, h, payload, ok_codes=(200, 201), params=rewind_query_params(rewind)
+            )
+            if last.ok or last.status_code not in (409, 500):
+                return last
+        assert last is not None
+        return last
 
     async def rehydrate(
         self,

@@ -157,8 +157,9 @@ async def test_single_tool_then_return_insight():
     assert result.status is TurnStatus.OK
     assert result.answer == "There are two great beers to try."
     assert result.debug.ai_process_result_exit == "insight"
-    assert len(zeus.calls) == 1
+    assert [call.verb for call in zeus.calls] == ["find", "return"]
     assert zeus.calls[0].verb == "find"
+    assert zeus.calls[1].body["summary"] == "Found two beers in Tampa."
     assert zeus.calls[0].allow_pipeline is True
     # second LLM call has no tools
     assert llm.calls[1].tools == ()

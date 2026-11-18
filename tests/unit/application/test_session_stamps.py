@@ -75,3 +75,47 @@ async def test_post_trace_stamps_and_keeps_dispatch_req_id() -> None:
     assert body["user"] == PRODUCT_USER
     assert body["zeus_response"]["user"] == PRODUCT_USER
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_retries_http_500_then_201() -> None:
+    seen = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["n"] += 1
+        if seen["n"] == 1:
+            return httpx.Response(500, text="document exists")
+        return httpx.Response(201, json={"session_id": "sess_new", "round": 1})
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = HttpxSessionClient(
+        endpoint=ZeusEndpointConfig(url=ZEUS),
+        secrets=EnvSecretStore({}),
+        client=http,
+    )
+    result = await client.create(contract_id="cid", contract_hash="h", chat_request={})
+    assert result.ok
+    assert result.body["session_id"] == "sess_new"
+    assert seen["n"] == 2
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_does_not_retry_http_400() -> None:
+    seen = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["n"] += 1
+        return httpx.Response(400, text="bad")
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = HttpxSessionClient(
+        endpoint=ZeusEndpointConfig(url=ZEUS),
+        secrets=EnvSecretStore({}),
+        client=http,
+    )
+    result = await client.create(contract_id="cid", contract_hash="h", chat_request={})
+    assert not result.ok
+    assert result.status_code == 400
+    assert seen["n"] == 1
+    await http.aclose()

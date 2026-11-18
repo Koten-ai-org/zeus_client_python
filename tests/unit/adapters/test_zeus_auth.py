@@ -15,9 +15,12 @@ from zeus_client.domain.errors import AuthError, ErrorCode
 
 @pytest.mark.asyncio
 async def test_basic_mints_per_scope_session(caplog: pytest.LogCaptureFixture) -> None:
+    posts = {"n": 0}
+
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/v1/beer-sample/_default/auth/session"
         assert request.headers.get("Authorization", "").startswith("Basic ")
+        posts["n"] += 1
         return httpx.Response(200, json={"session_id": "sid-abc123456789", "expires_in": 1800})
 
     transport = httpx.MockTransport(handler)
@@ -40,6 +43,11 @@ async def test_basic_mints_per_scope_session(caplog: pytest.LogCaptureFixture) -
     # cache hit — no second POST
     ctx2 = await resolver.resolve(DataTarget(bucket="beer-sample", scope="_default"))
     assert ctx2.headers["X-Zeus-Session"] == "sid-abc123456789"
+    assert posts["n"] == 1
+    resolver.forget(DataTarget(bucket="beer-sample", scope="_default"))
+    ctx3 = await resolver.resolve(DataTarget(bucket="beer-sample", scope="_default"))
+    assert ctx3.headers["X-Zeus-Session"] == "sid-abc123456789"
+    assert posts["n"] == 2
     blob = "\n".join(r.message for r in caplog.records)
     assert "s3cret-password" not in blob
     assert "sid-abc123456789" not in blob  # only prefix logged

@@ -105,7 +105,14 @@ from zeus_client.domain.tool_trail import (
 )
 from zeus_client.observability.logging import get_family_logger
 from zeus_client.observability.metrics import MetricsPort
-from zeus_client.ports import AgentMemoryPort, LlmPort, LlmRequest, VerbRequest, ZeusPort
+from zeus_client.ports import (
+    AgentMemoryPort,
+    LlmPort,
+    LlmRequest,
+    VerbHopResult,
+    VerbRequest,
+    ZeusPort,
+)
 from zeus_client.ports.id_factory import IdFactory
 
 __all__ = [
@@ -1230,6 +1237,36 @@ async def _execute_tool_calls(
             return_seen = True
             outcome.return_args = dict(tc_args)
             outcome.terminate_via = "return"
+            # Zeus resets the login round budget only after a posted
+            # return_result succeeds. /v2/return maps to that tool. An empty
+            # summary is a guaranteed 400, so it stays local. A transport
+            # error here must not drop a turn that already has its answer.
+            posted: VerbHopResult | None = None
+            if final_summary.strip() and zeus is not None:
+                try:
+                    posted = await zeus.call_verb(
+                        VerbRequest(
+                            verb="return",
+                            body=dict(tc_args) if isinstance(tc_args, dict) else {},
+                            target=target,
+                            mode_header=mode or "analytics",
+                            headers=correlation_headers(
+                                chat_id=chat_id,
+                                turn_id=turn_id,
+                                call_id=call_id,
+                                mode=mode or "analytics",
+                                force_trace=force_trace,
+                                trace_class=TRACE_CLASS_AGENT,
+                                chat_session_id=chat_session_id,
+                                brief_sha12=brief_sha12,
+                                mini_sha12=mini_sha12,
+                            ),
+                            allow_pipeline=True,
+                            rewind=rewind,
+                        )
+                    )
+                except ZeusClientError:
+                    posted = None
             messages.append(
                 {
                     "role": "tool",
@@ -1238,7 +1275,27 @@ async def _execute_tool_calls(
                     "content": json.dumps(tc_args),
                 }
             )
-            outcome.steps.append({"round": round_n, "type": name, "args": tc_args})
+            step: dict[str, Any] = {"round": round_n, "type": name, "args": tc_args}
+            if posted is not None:
+                step["status"] = posted.status_code
+                step["req_id"] = posted.req_id or ""
+                body = posted.body if isinstance(posted.body, Mapping) else {}
+                text = json.dumps(body) if body else (posted.error or "")
+                hop_rec = {
+                    "req_id": posted.req_id,
+                    "name": "return",
+                    "path_class": "return",
+                    "status": posted.status_code,
+                    "ok": posted.ok,
+                    "url": posted.url,
+                    "error": posted.error,
+                    "snippet": text[:TRACE_SNIPPET_MAX],
+                    "scope": f"{target.bucket}/{target.scope}" if target.bucket else "",
+                }
+                if body:
+                    hop_rec["result_json"] = dict(body)
+                outcome.hops.append(hop_rec)
+            outcome.steps.append(step)
             continue
 
         tc_args = await middleware.before_zeus(mw_ctx, name, tc_args)

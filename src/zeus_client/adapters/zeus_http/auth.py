@@ -211,3 +211,14 @@ class ZeusAuthResolver:
             sid[:12],
         )
         return AuthContext(headers={"X-Zeus-Session": sid}, mode="basic")
+
+    def forget(self, target: DataTarget | None = None) -> None:
+        """Drop a cached basic login so the next resolve mints a new one.
+
+        The round cap keys on this login, not the Hub chat session. A missing
+        bucket or scope drops nothing. The password stays in the secret store.
+        """
+        if target is None or not target.bucket or not target.scope:
+            return
+        user, _, _ = self._scope_user_pwd(target)
+        self._cache.pop((self.endpoint.url, target.bucket, target.scope, user), None)

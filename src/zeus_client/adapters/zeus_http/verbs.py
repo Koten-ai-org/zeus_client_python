@@ -135,6 +135,10 @@ class HttpxZeusPort:
     async def resolve_auth(self, target: DataTarget, *, force: bool = False) -> AuthContext:
         return await self._auth.resolve(target, force=force)
 
+    def forget_auth(self, target: DataTarget | None = None) -> None:
+        """Drop the cached basic login for this scope. The next call mints again."""
+        self._auth.forget(target)
+
     def _endpoint_for(self, req: VerbRequest) -> ZeusEndpointConfig:
         url = req.base_url or self.endpoint.url
         auth_mode = req.auth_mode if req.auth_mode is not None else self.endpoint.auth_mode
@@ -318,6 +322,14 @@ class HttpxZeusPort:
                     await self._sleep(delay / 1000)
                     continue
 
+            if (
+                status == 429
+                and isinstance(body, dict)
+                and str(body.get("error") or "") == "session_force_closed"
+            ):
+                # The login is revoked. Drop it so the next hop mints again.
+                # This call already died. Do not retry it.
+                self._auth.forget(req.target)
             ok = 200 <= status < 300 and not err
             self._journal_hop(
                 verb=verb,
