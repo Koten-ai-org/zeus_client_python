@@ -143,9 +143,12 @@ class HttpxSessionClient:
         if rewind:
             payload["rewind"] = True
         h = await self._headers(mode=mode, extra=headers, target=target)
-        return await self._post(
-            url, h, payload, ok_codes=(200, 201), params=rewind_query_params(rewind)
-        )
+        params = rewind_query_params(rewind)
+        # Zeus mints session_id. One retry is a new POST, not a client-invented id.
+        result = await self._post(url, h, payload, ok_codes=(200, 201), params=params)
+        if result.status_code in (409, 500):
+            return await self._post(url, h, payload, ok_codes=(200, 201), params=params)
+        return result
 
     async def rehydrate(
         self,

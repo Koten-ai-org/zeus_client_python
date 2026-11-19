@@ -255,7 +255,7 @@ async def test_lifecycle_dead_sid_recreates_same_turn() -> None:
 async def test_lifecycle_dead_sid_and_create_fail_clears_sid() -> None:
     dead = "stale-2"
     respx.get(f"{ZEUS}/v2/session/{dead}").mock(return_value=httpx.Response(404))
-    respx.post(f"{ZEUS}/v2/session").mock(return_value=httpx.Response(500, text="fail"))
+    create = respx.post(f"{ZEUS}/v2/session").mock(return_value=httpx.Response(500, text="fail"))
     http = HttpxSessionClient(
         endpoint=ZeusEndpointConfig(url=ZEUS),
         secrets=EnvSecretStore({}),
@@ -274,6 +274,7 @@ async def test_lifecycle_dead_sid_and_create_fail_clears_sid() -> None:
     assert handle.created is False
     assert handle.recovered_from == dead
     assert handle.error
+    assert create.call_count == 2
     await http.aclose()
 
 
