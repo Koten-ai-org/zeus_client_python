@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from zeus_client.adapters.secrets_env.store import EnvSecretStore
-from zeus_client.adapters.zeus_http.auth import ZeusAuthResolver
+from zeus_client.adapters.zeus_http.auth import ZeusAuthResolver, _CachedSid
 from zeus_client.config.models import DataTarget, M2MClientConfig, ZeusEndpointConfig
 from zeus_client.domain.errors import AuthError, ErrorCode
 
@@ -330,3 +330,24 @@ async def test_m2m_unset_issuer_does_not_call_idp_or_zeus(enable_unreleased_auth
     assert ei.value.code == ErrorCode.AUTH_FAILED
     assert "issuer is unset" in ei.value.public_message
     await http.aclose()
+
+
+def test_drop_basic_scope_keeps_pat_and_m2m() -> None:
+    resolver = ZeusAuthResolver(
+        endpoint=ZeusEndpointConfig(url="http://z", auth_mode="basic", username="admin")
+    )
+    ent = _CachedSid(sid="sid", pwd="pw", idle_ttl=1800, hard_deadline=10**12, last_used=0)
+    url, bucket, scope = "http://z", "east", "sales"
+    basic = (url, bucket, scope, "admin")
+    other_user = (url, bucket, scope, "other")
+    pat = (url, bucket, scope, "pat")
+    m2m = (url, bucket, scope, "m2m:zeus-nightly")
+    elsewhere = ("http://other", bucket, scope, "admin")
+    for key in (basic, other_user, pat, m2m, elsewhere):
+        resolver._cache[key] = ent
+    resolver.drop_basic_scope(url, bucket, scope)
+    assert basic not in resolver._cache
+    assert other_user not in resolver._cache
+    assert pat in resolver._cache
+    assert m2m in resolver._cache
+    assert elsewhere in resolver._cache

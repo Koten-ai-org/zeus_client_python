@@ -107,7 +107,7 @@ async def test_finish_stamps_req_ids_from_find_hop() -> None:
         llm=llm,
         zeus=zeus,
     )
-    assert result.debug.req_ids == ("req-find-airports",)
+    assert result.debug.req_ids == ("req-find-airports", "req-return")
     assert result.debug.preferred_req_id == "req-find-airports"
     hop = result.debug.hops[0]
     assert hop["url"].endswith("/find")
@@ -118,7 +118,7 @@ async def test_finish_stamps_req_ids_from_find_hop() -> None:
     assert "wish_i_knew" not in la
     assert "wish_i_knew" not in result.answer
     sess = result.debug.public_trace["session"]
-    assert sess["req_ids"] == ["req-find-airports"]
+    assert sess["req_ids"] == ["req-find-airports", "req-return"]
     md = result.debug.detective["diagnosis"]["support_pack"]["markdown"]
     assert "## 1. Ids" in md
     assert "## 9. Journal export" in md

@@ -51,6 +51,20 @@ class ZeusAuthResolver:
             await self.client.aclose()
             self.client = None
 
+    def drop_basic_scope(self, url: str, bucket: str, scope: str) -> None:
+        """Forget cached basic logins for one endpoint URL, bucket, and scope.
+
+        Keys whose fourth element is ``pat`` or starts with ``m2m:`` stay.
+        """
+        prefix = (url, bucket, scope)
+        for key in list(self._cache):
+            if key[:3] != prefix:
+                continue
+            kind = key[3]
+            if kind == "pat" or str(kind).startswith("m2m:"):
+                continue
+            self._cache.pop(key, None)
+
     async def _http(self) -> httpx.AsyncClient:
         if self.client is None:
             self.client = httpx.AsyncClient(timeout=self.endpoint.timeout_s)

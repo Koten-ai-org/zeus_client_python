@@ -14,6 +14,7 @@ from zeus_client.adapters.zeus_http.headers import apply_mode_header
 from zeus_client.adapters.zeus_http.verbs import (
     EXPOSED_V2_VERBS,
     HttpxZeusPort,
+    _body_has_session_force_closed,
     verb_allows_sdk_retry,
     verb_url,
     zeus_hop_retryable,
@@ -23,6 +24,7 @@ from zeus_client.config.models import DataTarget, RetryPolicy, RuntimeConfig, Ze
 from zeus_client.domain.errors import ErrorCode, ZeusToolError
 from zeus_client.domain.journal import InMemoryJournal
 from zeus_client.domain.journal.events import EVENT_ZEUS_HOP
+from zeus_client.ports import VerbRequest
 from zeus_client.runtime import ZeusRuntime
 
 
@@ -463,3 +465,81 @@ async def test_set_no_retry_503() -> None:
         await port.aclose()
     assert route.call_count == 1
     assert r.status_code == 503
+
+
+def test_session_force_closed_token_matches_raw_or_json_strings() -> None:
+    assert _body_has_session_force_closed("prefix session_force_closed suffix", None)
+    assert _body_has_session_force_closed("", {"error": {"code": "session_force_closed"}})
+    assert _body_has_session_force_closed("", {"nested": ["session_force_closed"]})
+    assert not _body_has_session_force_closed("", {"session_force_closed": 1})
+    assert not _body_has_session_force_closed("slow down", {"error": "rate"})
+
+
+def _basic_retry_port(base: str) -> HttpxZeusPort:
+    return HttpxZeusPort(
+        endpoint=ZeusEndpointConfig(
+            url=base,
+            auth_mode="basic",
+            username="admin",
+            password_env="ZEUS_PASSWORD",
+        ),
+        secrets=EnvSecretStore(environ={"ZEUS_PASSWORD": "pw"}),
+        retry=RetryPolicy(max_attempts=3, base_delay_ms=0, jitter=False),
+    )
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_429_session_force_closed_drops_basic_cache() -> None:
+    base = "http://zeus.test:8080"
+    mint = respx.post(f"{base}/v1/east/sales/auth/session").mock(
+        side_effect=[
+            httpx.Response(200, json={"session_id": "sess_one", "expires_in": 1800}),
+            httpx.Response(200, json={"session_id": "sess_two", "expires_in": 1800}),
+        ]
+    )
+    route = respx.post(f"{base}/v2/east/sales/_default/find").mock(
+        return_value=httpx.Response(429, json={"error": "session_force_closed"})
+    )
+    port = _basic_retry_port(base)
+    target = DataTarget(bucket="east", scope="sales", collection="_default")
+    try:
+        hop = await port.call_verb(VerbRequest(verb="find", body={}, target=target))
+        assert hop.status_code == 429
+        assert route.call_count == 1
+        assert mint.call_count == 1
+        auth = await port.resolve_auth(target)
+    finally:
+        await port.aclose()
+    assert auth.headers["X-Zeus-Session"] == "sess_two"
+    assert mint.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_429_without_session_force_closed_keeps_basic_cache() -> None:
+    base = "http://zeus.test:8080"
+    mint = respx.post(f"{base}/v1/east/sales/auth/session").mock(
+        return_value=httpx.Response(200, json={"session_id": "sess_keep", "expires_in": 1800})
+    )
+    route = respx.post(f"{base}/v2/east/sales/_default/find").mock(
+        side_effect=[
+            httpx.Response(429, json={"error": "slow"}),
+            httpx.Response(200, json={"ok": True}, headers={"X-Zeus-Req-Id": "r2"}),
+        ]
+    )
+    port = _basic_retry_port(base)
+    target = DataTarget(bucket="east", scope="sales", collection="_default")
+    try:
+        first = await port.call_verb(VerbRequest(verb="find", body={}, target=target))
+        assert first.status_code == 429
+        assert route.call_count == 1
+        assert mint.call_count == 1
+        second = await port.call_verb(VerbRequest(verb="find", body={}, target=target))
+    finally:
+        await port.aclose()
+    assert second.ok is True
+    assert route.call_count == 2
+    assert mint.call_count == 1
+    assert route.calls[0].request.headers["X-Zeus-Session"] == "sess_keep"
+    assert route.calls[1].request.headers["X-Zeus-Session"] == "sess_keep"
