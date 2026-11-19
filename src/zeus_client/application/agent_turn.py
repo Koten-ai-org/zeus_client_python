@@ -5,7 +5,7 @@ Loop law (locked):
   loop rounds:
     llm.complete
     tool_calls → zeus hops (pipeline allowed inside agent only) → append tools
-    terminate (return | pipeline turn_complete) → cheap vs insight
+    terminate (return posted when summary is non-empty | pipeline turn_complete) → cheap vs insight
   policy + peel → answer
   return TurnResult
 
@@ -70,7 +70,7 @@ from zeus_client.config.models import (
     DebugPolicy,
     SemanticCacheConfig,
 )
-from zeus_client.domain.errors import ErrorCode, LlmError, ZeusClientError
+from zeus_client.domain.errors import ErrorCode, LlmError, ZeusClientError, ZeusTransportError
 from zeus_client.domain.ids import new_trace_id, new_zeus_req_id
 from zeus_client.domain.journal.events import (
     EVENT_TURN_COMPLETED,
@@ -1192,6 +1192,88 @@ async def _insight_hop(
     return content
 
 
+async def _post_terminating_return(
+    *,
+    outcome: ToolRoundOutcome,
+    zeus: ZeusPort,
+    body: Mapping[str, Any],
+    target: DataTarget,
+    mode: str,
+    chat_id: str,
+    turn_id: str,
+    call_id: str,
+    force_trace: bool,
+    rewind: bool,
+    chat_session_id: str,
+    brief_sha12: str,
+    mini_sha12: str,
+) -> None:
+    """POST /v2/return. Transport loss stays local; HTTP errors are hops."""
+    payload = dict(body)
+    try:
+        t_tool = time.perf_counter()
+        hop = await zeus.call_verb(
+            VerbRequest(
+                verb="return",
+                body=payload,
+                target=target,
+                mode_header=mode or "analytics",
+                headers=correlation_headers(
+                    chat_id=chat_id,
+                    turn_id=turn_id,
+                    call_id=call_id,
+                    mode=mode or "analytics",
+                    force_trace=force_trace,
+                    trace_class=TRACE_CLASS_AGENT,
+                    chat_session_id=chat_session_id,
+                    brief_sha12=brief_sha12,
+                    mini_sha12=mini_sha12,
+                ),
+                allow_pipeline=True,
+                rewind=rewind,
+            )
+        )
+        ms = int((time.perf_counter() - t_tool) * 1000)
+    except ZeusTransportError:
+        # The summary is already the answer. A down Zeus must not fail the turn.
+        return
+    hop_body = hop.body if isinstance(hop.body, Mapping) else {}
+    text = json.dumps(hop_body) if hop_body else (hop.error or "")
+    shape = tool_payload_shape(hop_body)
+    get_family_logger().trace(
+        "zeus_client.tool.result_shape",
+        **{"verb": "return", **shape, "redacted": True},
+    )
+    get_family_logger().trace(
+        "zeus_client.tool.args_shape",
+        **{"verb": "return", "keys": [str(k) for k in list(payload.keys())[:24]]},
+    )
+    meta = extract_pipeline_meta(hop_body)
+    hop_rec = {
+        "req_id": hop.req_id,
+        "name": "return",
+        "path_class": "return",
+        "status": hop.status_code,
+        "ok": hop.ok,
+        "ms": ms,
+        "url": getattr(hop, "url", "") or "",
+        "error": hop.error,
+        "snippet": text[:TRACE_SNIPPET_MAX],
+        "scope": f"{target.bucket}/{target.scope}" if target.bucket else "",
+        **meta,
+    }
+    if hop_body:
+        hop_rec["result_json"] = dict(hop_body)
+    outcome.hops.append(hop_rec)
+    outcome.tools_executed += 1
+    empty = (not hop.ok) or _is_empty_json_value(hop_body) or not text.strip()
+    if empty:
+        outcome.tools_empty += 1
+    else:
+        outcome.tools_with_data += 1
+        outcome.tools_with_payload += 1
+
+
 async def _execute_tool_calls(
     *,
     tool_calls: Sequence[Mapping[str, Any]],
@@ -1241,6 +1323,23 @@ async def _execute_tool_calls(
                 }
             )
             outcome.steps.append({"round": round_n, "type": name, "args": tc_args})
+            summary = tc_args.get("summary")
+            if isinstance(summary, str) and summary.strip():
+                await _post_terminating_return(
+                    outcome=outcome,
+                    zeus=zeus,
+                    body=tc_args,
+                    target=target,
+                    mode=mode,
+                    chat_id=chat_id,
+                    turn_id=turn_id,
+                    call_id=call_id,
+                    force_trace=force_trace,
+                    rewind=rewind,
+                    chat_session_id=chat_session_id,
+                    brief_sha12=brief_sha12,
+                    mini_sha12=mini_sha12,
+                )
             continue
 
         tc_args = await middleware.before_zeus(mw_ctx, name, tc_args)

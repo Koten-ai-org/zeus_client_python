@@ -20,6 +20,7 @@ from zeus_client.application.middleware import (
     SecurityHooks,
 )
 from zeus_client.config.models import ClientSettings, DataTarget, DebugPolicy
+from zeus_client.domain.errors import ErrorCode, ZeusTransportError
 from zeus_client.domain.journal import InMemoryJournal
 from zeus_client.domain.journal.events import EVENT_TURN_STARTED
 from zeus_client.domain.messages import TurnRequest, TurnStatus
@@ -157,15 +158,25 @@ async def test_single_tool_then_return_insight():
     assert result.status is TurnStatus.OK
     assert result.answer == "There are two great beers to try."
     assert result.debug.ai_process_result_exit == "insight"
-    assert len(zeus.calls) == 1
-    assert zeus.calls[0].verb == "find"
+    assert [c.verb for c in zeus.calls] == ["find", "return"]
     assert zeus.calls[0].allow_pipeline is True
+    ret = zeus.calls[1]
+    assert ret.verb == "return"
+    assert ret.body["summary"] == "Found two beers in Tampa."
+    assert ret.target == zeus.calls[0].target
+    assert ret.mode_header == zeus.calls[0].mode_header
+    assert ret.allow_pipeline is True
+    assert ret.headers["X-Zeus-Call-Id"] == "c2"
+    assert ret.headers["X-Zeus-Turn-Id"] == zeus.calls[0].headers["X-Zeus-Turn-Id"]
+    assert ret.headers["X-Zeus-Trace-Class"] == zeus.calls[0].headers["X-Zeus-Trace-Class"]
     # second LLM call has no tools
     assert llm.calls[1].tools == ()
     assert result.structured is not None
     assert result.structured.policy == "answer"
     assert "wish_i_knew" not in result.answer
     assert result.debug.hops and result.debug.hops[0]["req_id"] == "req-find-1"
+    assert result.debug.hops[1]["name"] == "return"
+    assert result.debug.hops[1]["req_id"] == "req-return"
 
 
 @pytest.mark.asyncio
@@ -858,3 +869,166 @@ async def test_denied_verb_skips_zeus_and_scores() -> None:
     )
     assert zeus.calls == []
     assert result.debug.hooks_jailbreak_score >= 0.6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "summary"),
+    [
+        ("return", ""),
+        ("return", "   "),
+        ("return", "\n\t"),
+        ("return_result", ""),
+        ("return_result", " \n "),
+    ],
+)
+async def test_blank_summary_does_not_post_return(tool_name: str, summary: str) -> None:
+    llm = ScriptedLlm(
+        script=[
+            LlmResponse(
+                content=None,
+                tool_calls=(_tc(tool_name, _return_args(summary=summary), "c1"),),
+            )
+        ]
+    )
+    zeus = ScriptedZeus()
+    await run_agent_turn(
+        TurnRequest(
+            message="list beers",
+            tools=(RETURN_TOOL,),
+            settings=ClientSettings(ai_process_result=False, max_rounds=2),
+        ),
+        llm=llm,
+        zeus=zeus,
+    )
+    assert zeus.calls == []
+
+
+@pytest.mark.asyncio
+async def test_missing_summary_does_not_post_return() -> None:
+    args = _return_args()
+    args.pop("summary")
+    llm = ScriptedLlm(script=[LlmResponse(content=None, tool_calls=(_tc("return", args, "c1"),))])
+    zeus = ScriptedZeus()
+    await run_agent_turn(
+        TurnRequest(
+            message="list beers",
+            tools=(RETURN_TOOL,),
+            settings=ClientSettings(ai_process_result=False),
+        ),
+        llm=llm,
+        zeus=zeus,
+    )
+    assert zeus.calls == []
+
+
+@pytest.mark.asyncio
+async def test_return_result_posts_verb_return() -> None:
+    summary = "Wrapped up from return_result."
+    llm = ScriptedLlm(
+        script=[
+            LlmResponse(
+                content=None,
+                tool_calls=(_tc("return_result", _return_args(summary=summary), "c9"),),
+            )
+        ]
+    )
+    zeus = ScriptedZeus()
+    result = await run_agent_turn(
+        TurnRequest(
+            message="list beers",
+            tools=(RETURN_TOOL,),
+            settings=ClientSettings(ai_process_result=False),
+        ),
+        llm=llm,
+        zeus=zeus,
+    )
+    assert result.status is TurnStatus.OK
+    assert result.answer == summary
+    assert [c.verb for c in zeus.calls] == ["return"]
+    assert zeus.calls[0].body["summary"] == summary
+    assert zeus.calls[0].headers["X-Zeus-Call-Id"] == "c9"
+    tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+    assert tool_msgs[-1]["name"] == "return_result"
+    assert result.debug.public_trace["layer_a"]["via"] == "return"
+
+
+@pytest.mark.asyncio
+async def test_return_transport_error_keeps_summary() -> None:
+    summary = "Kept despite transport."
+
+    class _Boom(ScriptedZeus):
+        async def call_verb(self, req: VerbRequest) -> VerbHopResult:
+            self.calls.append(req)
+            if req.verb == "return":
+                raise ZeusTransportError(
+                    code=ErrorCode.ZEUS_TRANSPORT,
+                    component="test",
+                    public_message="zeus HTTP transport error",
+                )
+            return VerbHopResult(ok=True, status_code=200, req_id="req-find", body={})
+
+    zeus = _Boom()
+    result = await run_agent_turn(
+        TurnRequest(
+            message="list beers",
+            tools=(RETURN_TOOL,),
+            settings=ClientSettings(ai_process_result=False),
+        ),
+        llm=ScriptedLlm(
+            script=[
+                LlmResponse(
+                    content=None,
+                    tool_calls=(_tc("return", _return_args(summary=summary), "c1"),),
+                )
+            ]
+        ),
+        zeus=zeus,
+    )
+    assert result.status is TurnStatus.OK
+    assert result.answer == summary
+    assert result.error is None
+    assert [c.verb for c in zeus.calls] == ["return"]
+    assert result.debug.hops == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 500])
+async def test_return_http_error_is_recorded_and_turn_stays_ok(status_code: int) -> None:
+    summary = "Kept after HTTP error."
+    zeus = ScriptedZeus(
+        results={
+            "return": VerbHopResult(
+                ok=False,
+                status_code=status_code,
+                req_id="req-return-bad",
+                error=f"zeus HTTP {status_code}",
+                body={"error": "nope"},
+            )
+        }
+    )
+    result = await run_agent_turn(
+        TurnRequest(
+            message="list beers",
+            tools=(RETURN_TOOL,),
+            settings=ClientSettings(ai_process_result=False),
+        ),
+        llm=ScriptedLlm(
+            script=[
+                LlmResponse(
+                    content=None,
+                    tool_calls=(_tc("return", _return_args(summary=summary), "c1"),),
+                )
+            ]
+        ),
+        zeus=zeus,
+    )
+    assert result.status is TurnStatus.OK
+    assert result.answer == summary
+    assert result.error is None
+    assert zeus.calls[0].verb == "return"
+    assert len(zeus.calls) == 1
+    hop = result.debug.hops[-1]
+    assert hop["name"] == "return"
+    assert hop["status"] == status_code
+    assert hop["ok"] is False

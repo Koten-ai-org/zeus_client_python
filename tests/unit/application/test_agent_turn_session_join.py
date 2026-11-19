@@ -186,8 +186,11 @@ async def test_enable_sessions_posts_trace_join_then_commits_turn() -> None:
     assert life.setups[0]["user_message"] == "give the list of airports in US"
     assert life.setups[0]["chat_id"] == "chat_airports"
 
+    assert [c.verb for c in zeus.calls] == ["find", "return"]
+    assert zeus.calls[1].body["summary"] == "20 US airports were returned."
     assert client.posts, "expected POST /v2/session/trace"
-    post = client.posts[0]
+    assert [p["req_id"] for p in client.posts] == ["req-return", "req-find-airports"]
+    post = client.posts[-1]
     assert post["session_id"] == "sess_join_1"
     assert post["turn_id"] == result.debug.turn_id
     assert post["req_id"] == "req-find-airports"
@@ -195,7 +198,7 @@ async def test_enable_sessions_posts_trace_join_then_commits_turn() -> None:
     zresp = post["zeus_response"]
     assert zresp["aggregate"] is True
     assert zresp["primary_req_id"] == "req-find-airports"
-    assert zresp["req_ids"] == ["req-find-airports"]
+    assert zresp["req_ids"] == ["req-find-airports", "req-return"]
     la = zresp["layer_a"]
     assert la["query_decomposition"]["entity"] == "Airport"
     assert la["query_decomposition"]["intent"] == "List"
@@ -219,7 +222,7 @@ async def test_enable_sessions_posts_trace_join_then_commits_turn() -> None:
     assert result.session.session_id == "sess_join_1"
     assert result.debug.preferred_req_id == "req-find-airports"
     sess = (result.debug.public_trace or {}).get("session") or {}
-    assert sess.get("req_ids") == ["req-find-airports"]
+    assert sess.get("req_ids") == ["req-find-airports", "req-return"]
     assert sess.get("preferred_req_id") == "req-find-airports"
 
 

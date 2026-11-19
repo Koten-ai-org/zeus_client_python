@@ -81,6 +81,26 @@ def zeus_hop_retryable(verb: str, *, status: int, transport_err: bool) -> bool:
     return 500 <= int(status) <= 599
 
 
+_SESSION_FORCE_CLOSED = "session_force_closed"
+
+
+def _body_has_session_force_closed(raw_text: str, parsed: Any) -> bool:
+    """True when raw body text or a JSON string value contains the token."""
+    if _SESSION_FORCE_CLOSED in (raw_text or ""):
+        return True
+    return _strings_contain(parsed, _SESSION_FORCE_CLOSED)
+
+
+def _strings_contain(value: Any, token: str) -> bool:
+    if isinstance(value, str):
+        return token in value
+    if isinstance(value, Mapping):
+        return any(_strings_contain(item, token) for item in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(_strings_contain(item, token) for item in value)
+    return False
+
+
 def _backoff_ms(policy: RetryPolicy, attempt: int) -> int:
     base = int(policy.base_delay_ms * (2 ** max(0, attempt)))
     base = min(base, int(policy.max_delay_ms))
@@ -160,14 +180,11 @@ class HttpxZeusPort:
             token_env=token_env,
         )
 
-    async def _auth_for(
-        self, req: VerbRequest, target: DataTarget, *, force: bool = False
-    ) -> AuthContext:
+    def _resolver_for(self, req: VerbRequest) -> ZeusAuthResolver:
         endpoint = self._endpoint_for(req)
         if endpoint is self.endpoint:
-            return await self._auth.resolve(target, force=force)
-        resolver = ZeusAuthResolver(endpoint=endpoint, secrets=self.secrets)
-        return await resolver.resolve(target, force=force)
+            return self._auth
+        return ZeusAuthResolver(endpoint=endpoint, secrets=self.secrets)
 
     async def call_verb(self, req: VerbRequest) -> VerbHopResult:
         verb = (req.verb or "").strip()
@@ -187,7 +204,8 @@ class HttpxZeusPort:
                 details={"verb": verb},
             )
 
-        auth = await self._auth_for(req, req.target)
+        resolver = self._resolver_for(req)
+        auth = await resolver.resolve(req.target)
         hop_endpoint = self._endpoint_for(req)
         url = verb_url(hop_endpoint.url, req.target, verb)
 
@@ -235,7 +253,7 @@ class HttpxZeusPort:
                     "pat",
                     "m2m",
                 }:
-                    auth = await self._auth_for(req, req.target, force=True)
+                    auth = await resolver.resolve(req.target, force=True)
                     headers = _headers(auth)
                     if req.pre_mint_req_id and not any(
                         k.lower() == "x-zeus-req-id" for k in headers
@@ -246,13 +264,26 @@ class HttpxZeusPort:
                     )
                 status = int(resp.status_code)
                 req_id = req_id_from_headers(resp.headers)
+                raw_text = resp.text or ""
+                parsed: Any = None
                 try:
                     parsed = resp.json()
                     body = parsed if isinstance(parsed, dict) else {"result": parsed}
                 except Exception:
-                    body = {"raw": (resp.text or "")[:2000]}
+                    body = {"raw": raw_text[:2000]}
                 if status >= 400:
                     err = f"zeus HTTP {status}"
+                # Drop the basic login and return this hop. Do not remint or retry.
+                if (
+                    (hop_endpoint.auth_mode or "") == "basic"
+                    and status == 429
+                    and _body_has_session_force_closed(raw_text, parsed)
+                ):
+                    resolver.drop_basic_scope(
+                        resolver.endpoint.url,
+                        req.target.bucket,
+                        req.target.scope,
+                    )
             except httpx.HTTPError as exc:
                 err = str(exc)
                 status = 0
