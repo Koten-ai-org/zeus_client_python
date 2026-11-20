@@ -1277,7 +1277,15 @@ async def _execute_tool_calls(
             continue
 
         if name == "pipeline":
-            tc_args, _fts_steps = rewrite_fts_ids_to_doc_keys(tc_args)
+            # Log here. call_verb rewrites again and finds no @step.ids, so its
+            # log stays quiet on this path and only fires for a caller that
+            # skipped this rewrite.
+            tc_args, fts_steps = rewrite_fts_ids_to_doc_keys(tc_args)
+            if fts_steps:
+                get_family_logger().info(
+                    "zeus_client.pipeline.fts_doc_keys",
+                    steps=list(fts_steps),
+                )
         t_tool = time.perf_counter()
         hop = await zeus.call_verb(
             VerbRequest(
