@@ -95,6 +95,7 @@ from zeus_client.domain.messages import (
     TurnResult,
     TurnStatus,
 )
+from zeus_client.domain.pipeline_bindings import rewrite_fts_ids_to_doc_keys
 from zeus_client.domain.policy import decide_policy
 from zeus_client.domain.session import SessionHandle
 from zeus_client.domain.stamps import product_stamp, resolve_client_ip
@@ -1374,6 +1375,16 @@ async def _execute_tool_calls(
             )
             continue
 
+        if name == "pipeline":
+            # Log here. call_verb rewrites again and finds no @step.ids, so its
+            # log stays quiet on this path and only fires for a caller that
+            # skipped this rewrite.
+            tc_args, fts_steps = rewrite_fts_ids_to_doc_keys(tc_args)
+            if fts_steps:
+                get_family_logger().info(
+                    "zeus_client.pipeline.fts_doc_keys",
+                    steps=list(fts_steps),
+                )
         t_tool = time.perf_counter()
         hop = await zeus.call_verb(
             VerbRequest(

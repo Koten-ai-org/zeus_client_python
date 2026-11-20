@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,6 +25,7 @@ from zeus_client.domain.errors import ErrorCode, ZeusTransportError
 from zeus_client.domain.journal import InMemoryJournal
 from zeus_client.domain.journal.events import EVENT_TURN_STARTED
 from zeus_client.domain.messages import TurnRequest, TurnStatus
+from zeus_client.observability.logging import CaptureLogHandler, get_family_logger
 from zeus_client.ports import LlmRequest, LlmResponse, VerbHopResult, VerbRequest
 
 
@@ -481,6 +483,57 @@ async def test_use_case_and_pipeline_allow_flag():
     assert zeus.calls[0].allow_pipeline is True
     assert result.debug.ai_process_result_exit == "cheap_terminal"
     assert "Pipe done" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_pipeline_fts_rewrite_is_logged_on_the_agent_turn() -> None:
+    plan = {
+        "steps": [
+            {"as": "peach", "verb": "search", "strategy": "fts", "query_text": "peach"},
+            {"as": "rows", "verb": "project", "ids": "@peach.ids", "fields": ["name"]},
+        ],
+        "summary": "keep @peach.ids in the summary",
+    }
+    llm = ScriptedLlm(
+        script=[
+            LlmResponse(
+                content=None,
+                tool_calls=(_tc("pipeline", plan, "c1"),),
+            ),
+        ]
+    )
+    zeus = ScriptedZeus(
+        results={
+            "pipeline": VerbHopResult(
+                ok=True,
+                status_code=200,
+                req_id="req-pipe",
+                body={"turn_complete": True, "summary": "keep @peach.ids in the summary"},
+            )
+        }
+    )
+    sink: list[dict] = []
+    logger = logging.getLogger("zeus_client")
+    handler = CaptureLogHandler(sink)
+    logger.addHandler(handler)
+    get_family_logger().set_level("info")
+    try:
+        await AgentTurnUseCase(llm=llm, zeus=zeus).run(
+            TurnRequest(
+                message="peach beers",
+                tools=({"type": "function", "function": {"name": "pipeline", "parameters": {}}},),
+                settings=ClientSettings(ai_process_result=False),
+            )
+        )
+    finally:
+        logger.removeHandler(handler)
+
+    posted = zeus.calls[0].body
+    assert posted["steps"][1]["ids"] == "@peach.doc_keys"
+    assert posted["summary"] == "keep @peach.ids in the summary"
+    events = [row for row in sink if row["event"] == "zeus_client.pipeline.fts_doc_keys"]
+    assert len(events) == 1
+    assert events[0]["attrs"]["steps"] == ["peach"]
 
 
 @pytest.mark.asyncio
