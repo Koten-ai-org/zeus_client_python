@@ -43,6 +43,22 @@ __all__ = [
 
 COMPONENT = "adapters.llm_openai_compatible"
 
+# 050010 rate limit, 050015 overload, 050016 unavailable. A 200ms
+# transport backoff finishes before a short provider window opens.
+# The same model call is retried. Zeus tool results already in the
+# turn stay, because this wait happens inside complete().
+_PROVIDER_WINDOW_CODES = frozenset(
+    {
+        ErrorCode.LLM_RATE_LIMIT,
+        ErrorCode.LLM_PROVIDER_OVERLOAD,
+        ErrorCode.LLM_PROVIDER_UNAVAILABLE,
+    }
+)
+_PROVIDER_WINDOW_BASE_MS = 5_000
+_PROVIDER_WINDOW_CAP_MS = 20_000
+# 5s + 10s + 20s fits, and one Retry-After up to 60s still gets a retry.
+_LLM_RETRY_EXTRA_MS = 60_000
+
 SleepFn = Callable[[float], Awaitable[None]]
 
 
@@ -264,13 +280,30 @@ def _host_of(url: str) -> str:
         return ""
 
 
-def _backoff_ms(policy: RetryPolicy, attempt: int, retry_after_s: float | None) -> int:
-    if retry_after_s is not None and retry_after_s >= 0:
-        base = int(retry_after_s * 1000)
+def _backoff_ms(
+    policy: RetryPolicy,
+    attempt: int,
+    retry_after_s: float | None,
+    *,
+    provider_window: bool,
+) -> int:
+    """Milliseconds before another post of the same model call.
+
+    An explicit ``Retry-After`` is the wait, including 0. It is not
+    jittered and it is not clamped to the transport cap. 050010,
+    050015, and 050016 with no header wait 5s, then 10s, then 20s.
+    A non-numeric ``Retry-After`` is ignored and the schedule above
+    applies. Timeouts keep the short transport schedule.
+    """
+    if provider_window and retry_after_s is not None and retry_after_s >= 0:
+        return max(0, int(retry_after_s * 1000))
+    if provider_window:
+        base = int(_PROVIDER_WINDOW_BASE_MS * (2 ** max(0, attempt)))
+        base = min(base, _PROVIDER_WINDOW_CAP_MS)
     else:
         # attempt is 0-based failure index
         base = int(policy.base_delay_ms * (2**attempt))
-    base = min(base, int(policy.max_delay_ms))
+        base = min(base, int(policy.max_delay_ms))
     if policy.jitter and base > 0:
         base = int(base * (0.5 + random.random() * 0.5))
     return max(0, base)
@@ -399,6 +432,40 @@ class OpenAICompatibleLlmClient:
         else:
             await asyncio.sleep(seconds)
 
+    async def _continue_after_failure(
+        self,
+        *,
+        cls: LlmClassification,
+        attempt: int,
+        budget: RetryBudget,
+        model: str,
+        retry_after_s: float | None,
+    ) -> bool:
+        """Wait and return True when the same model call should be posted again."""
+        window = cls.code in _PROVIDER_WINDOW_CODES
+        delay = _backoff_ms(
+            self.retry,
+            attempt,
+            retry_after_s,
+            provider_window=window,
+        )
+        if not budget.allow(retryable=cls.retryable, delay_ms=delay):
+            return False
+        budget.consume(delay)
+        get_family_logger().info(
+            "zeus_client.llm.request_retry",
+            **{
+                "llm.provider": self.config.provider,
+                "llm.model": model,
+                "error.code": cls.code.value,
+                "attempt": attempt + 1,
+                "retry.delay_ms": delay,
+                "result": "retry",
+            },
+        )
+        await self._sleep(delay / 1000.0)
+        return True
+
     async def complete(self, req: LlmRequest) -> LlmResponse:
         api_key = self._resolve_api_key()
         model = req.model or self.config.model
@@ -447,7 +514,10 @@ class OpenAICompatibleLlmClient:
         budget = (
             self.budget
             if self.budget is not None
-            else RetryBudget(max_attempts=self.retry.max_attempts)
+            else RetryBudget(
+                max_attempts=self.retry.max_attempts,
+                max_extra_ms=_LLM_RETRY_EXTRA_MS,
+            )
         )
         attempt = 0
         while True:
@@ -464,11 +534,14 @@ class OpenAICompatibleLlmClient:
                     classification=cls,
                     latency_ms=int((time.perf_counter() - t0) * 1000),
                 )
-                delay = _backoff_ms(self.retry, attempt, None)
-                if budget.allow(retryable=cls.retryable, delay_ms=delay):
-                    budget.consume(delay)
+                if await self._continue_after_failure(
+                    cls=cls,
+                    attempt=attempt,
+                    budget=budget,
+                    model=model,
+                    retry_after_s=None,
+                ):
                     attempt += 1
-                    await self._sleep(delay / 1000.0)
                     continue
                 self._raise_classified(cls, provider=self.config.provider, model=model)
             except httpx.HTTPError:
@@ -480,11 +553,14 @@ class OpenAICompatibleLlmClient:
                     classification=cls,
                     latency_ms=int((time.perf_counter() - t0) * 1000),
                 )
-                delay = _backoff_ms(self.retry, attempt, None)
-                if budget.allow(retryable=cls.retryable, delay_ms=delay):
-                    budget.consume(delay)
+                if await self._continue_after_failure(
+                    cls=cls,
+                    attempt=attempt,
+                    budget=budget,
+                    model=model,
+                    retry_after_s=None,
+                ):
                     attempt += 1
-                    await self._sleep(delay / 1000.0)
                     continue
                 self._raise_classified(cls, provider=self.config.provider, model=model)
 
@@ -544,11 +620,14 @@ class OpenAICompatibleLlmClient:
                 latency_ms=latency_ms,
             )
             retry_after = _parse_retry_after(response.headers.get("Retry-After"))
-            delay = _backoff_ms(self.retry, attempt, retry_after)
-            if budget.allow(retryable=cls.retryable, delay_ms=delay):
-                budget.consume(delay)
+            if await self._continue_after_failure(
+                cls=cls,
+                attempt=attempt,
+                budget=budget,
+                model=model,
+                retry_after_s=retry_after,
+            ):
                 attempt += 1
-                await self._sleep(delay / 1000.0)
                 continue
             self._raise_classified(cls, provider=self.config.provider, model=model)
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- LLM `050010` (rate limit), `050015` (overload), and `050016` (unavailable) retry that same model call. `Retry-After` is the wait when the provider sends a number of seconds. Without that header the wait is 5s, then 10s, then 20s. Three extra attempts. The extra wait on one call stays inside 60 seconds. A header longer than the remaining budget ends the call. Zeus tool results already in the turn stay. A timeout (`050005`) still uses the short transport backoff. The question is not run only when those retries are exhausted and the turn never reached Zeus. (ZCP-134)
+
 ---
 
 ## 2.5.4 — 2026-10-30
