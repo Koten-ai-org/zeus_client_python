@@ -18,7 +18,7 @@ from zeus_client.application.session_lifecycle import (
     SessionLifecycle,
     contract_status_from_rehydrate,
 )
-from zeus_client.config.models import ZeusEndpointConfig
+from zeus_client.config.models import DataTarget, ZeusEndpointConfig
 from zeus_client.domain.session import SessionHandle
 
 ZEUS = "http://zeus.test:8080"
@@ -88,9 +88,81 @@ async def test_http_create_session_wire_shape() -> None:
     assert result.req_id == "d4000000-0000-4000-8000-000000000004"
     assert result.body["session_id"] == "zsess_mock_turn_001"
     assert route.called
-    body = route.calls.last.request.read()
-    assert b"contract_id" in body
-    assert b"chat_request" in body
+    body = json.loads(route.calls.last.request.content)
+    assert "contract_id" in body
+    assert "chat_request" in body
+    assert "bucket" not in body
+    assert "scope" not in body
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_http_session_posts_include_target_scope() -> None:
+    target = DataTarget(bucket="yelp-demo", scope="_default")
+    create_route = respx.post(f"{ZEUS}/v2/session").mock(
+        return_value=httpx.Response(201, json={"session_id": "sess-scope", "round": 1})
+    )
+    turn_route = respx.post(f"{ZEUS}/v2/session/sess-scope/turn").mock(
+        return_value=httpx.Response(200, json={"session_id": "sess-scope", "round": 2})
+    )
+    trace_route = respx.post(f"{ZEUS}/v2/session/trace").mock(
+        return_value=httpx.Response(201, json={"ok": True})
+    )
+    client = HttpxSessionClient(
+        endpoint=ZeusEndpointConfig(url=ZEUS),
+        secrets=EnvSecretStore({}),
+    )
+    created = await client.create(
+        contract_id="analytics_v4",
+        contract_hash="md5:abc",
+        chat_request={"contract": {"scope": "prototype/_unbound"}},
+        conversation=[],
+        target=target,
+    )
+    assert created.ok
+    created_body = json.loads(create_route.calls.last.request.content)
+    assert created_body["bucket"] == "yelp-demo"
+    assert created_body["scope"] == "_default"
+
+    turned = await client.continue_turn(
+        session_id="sess-scope",
+        client_round=2,
+        chat_request={},
+        new_turns=[{"role": "user", "content": "hi"}],
+        target=target,
+    )
+    assert turned.ok
+    turned_body = json.loads(turn_route.calls.last.request.content)
+    assert turned_body["bucket"] == "yelp-demo"
+    assert turned_body["scope"] == "_default"
+
+    traced = await client.post_trace(
+        session_id="sess-scope",
+        client_round=2,
+        req_id="req-1",
+        contract_id="analytics_v4",
+        contract_hash="md5:abc",
+        chat_request={},
+        turns=[{"role": "user", "content": "hi"}],
+        target=target,
+    )
+    assert traced.ok
+    traced_body = json.loads(trace_route.calls.last.request.content)
+    assert traced_body["bucket"] == "yelp-demo"
+    assert traced_body["scope"] == "_default"
+
+    blank = await client.create(
+        contract_id="analytics_v4",
+        contract_hash="md5:abc",
+        chat_request={},
+        conversation=[],
+        target=DataTarget(bucket="yelp-demo", scope=""),
+    )
+    assert blank.ok
+    blank_body = json.loads(create_route.calls.last.request.content)
+    assert "bucket" not in blank_body
+    assert "scope" not in blank_body
     await client.aclose()
 
 

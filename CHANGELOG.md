@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- LLM `050010` (rate limit), `050015` (overload), and `050016` (unavailable) retry that same model call. `Retry-After` is the wait when the provider sends a number of seconds. Without that header the wait is 5s, then 10s, then 20s. Three extra attempts. The extra wait on one call stays inside 60 seconds. A header longer than the remaining budget ends the call. Zeus tool results already in the turn stay. A timeout (`050005`) still uses the short transport backoff. The question is not run only when those retries are exhausted and the turn never reached Zeus.
 - A terminating `return` with a non-empty `summary` is POSTed to `/v2/return`, which Zeus maps to `return_result` and uses to reset the per-login round budget (ZCP-135). An empty summary stays local. A transport error on that post does not fail the turn.
 - HTTP 429 `session_force_closed` drops the cached basic login for that scope and is not retried (ZCP-135).
 - `POST /v2/session` retries on HTTP 409 and HTTP 500 so a same-microsecond id collision can mint again (ZCP-135).

@@ -167,7 +167,186 @@ async def test_complete_429_rate_retries_then_ok() -> None:
 
     assert resp.content == "ok"
     assert calls["n"] == 2
-    assert sleeps  # at least one backoff
+    assert sleeps == [0.0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_429_without_header_waits_provider_window() -> None:
+    calls = {"n": 0}
+
+    def _side(request):
+        calls["n"] += 1
+        if calls["n"] < 4:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "rate limit"}},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+        )
+
+    respx.post(f"{BASE}/chat/completions").mock(side_effect=_side)
+    sleeps: list[float] = []
+
+    async def _sleep(s: float) -> None:
+        sleeps.append(s)
+
+    client = _client(
+        retry=RetryPolicy(max_attempts=3, base_delay_ms=10, max_delay_ms=1_000, jitter=False),
+        budget=RetryBudget(max_attempts=3, max_extra_ms=60_000),
+        sleep=_sleep,
+    )
+    try:
+        resp = await client.complete(LlmRequest(messages=({"role": "user", "content": "x"},)))
+    finally:
+        await client.aclose()
+
+    assert resp.content == "ok"
+    assert calls["n"] == 4
+    assert sleeps == [5.0, 10.0, 20.0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_429_retry_after_is_not_clamped() -> None:
+    calls = {"n": 0}
+
+    def _side(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(
+                429,
+                json={"error": {"message": "rate limit"}},
+                headers={"Retry-After": "8"},
+            )
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+        )
+
+    respx.post(f"{BASE}/chat/completions").mock(side_effect=_side)
+    sleeps: list[float] = []
+
+    async def _sleep(s: float) -> None:
+        sleeps.append(s)
+
+    client = _client(
+        retry=RetryPolicy(max_attempts=2, base_delay_ms=10, max_delay_ms=1_000, jitter=False),
+        budget=RetryBudget(max_attempts=2, max_extra_ms=60_000),
+        sleep=_sleep,
+    )
+    try:
+        resp = await client.complete(LlmRequest(messages=({"role": "user", "content": "x"},)))
+    finally:
+        await client.aclose()
+
+    assert resp.content == "ok"
+    assert sleeps == [8.0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_503_and_500_use_provider_window() -> None:
+    sleeps: list[float] = []
+
+    async def _sleep(s: float) -> None:
+        sleeps.append(s)
+
+    for status, body in (
+        (503, {"error": {"message": "overloaded, try again later"}}),
+        (500, {"error": {"message": "unavailable"}}),
+    ):
+        sleeps.clear()
+        calls = {"n": 0}
+
+        def _side(request, _status=status, _body=body):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(_status, json=_body)
+            return httpx.Response(
+                200,
+                json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+            )
+
+        respx.post(f"{BASE}/chat/completions").mock(side_effect=_side)
+        client = _client(
+            retry=RetryPolicy(max_attempts=1, base_delay_ms=10, jitter=False),
+            budget=RetryBudget(max_attempts=1, max_extra_ms=60_000),
+            sleep=_sleep,
+        )
+        try:
+            resp = await client.complete(LlmRequest(messages=({"role": "user", "content": "x"},)))
+        finally:
+            await client.aclose()
+        assert resp.content == "ok"
+        assert sleeps == [5.0]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_retry_after_beyond_budget_does_not_sleep() -> None:
+    route = respx.post(f"{BASE}/chat/completions").mock(
+        return_value=httpx.Response(
+            429,
+            json={"error": {"message": "rate limit"}},
+            headers={"Retry-After": "90"},
+        )
+    )
+    sleeps: list[float] = []
+
+    async def _sleep(s: float) -> None:
+        sleeps.append(s)
+
+    client = _client(
+        retry=RetryPolicy(max_attempts=3, base_delay_ms=10, jitter=False),
+        budget=RetryBudget(max_attempts=3, max_extra_ms=60_000),
+        sleep=_sleep,
+    )
+    try:
+        with pytest.raises(LlmError) as ei:
+            await client.complete(LlmRequest(messages=({"role": "user", "content": "x"},)))
+    finally:
+        await client.aclose()
+
+    assert ei.value.code is ErrorCode.LLM_RATE_LIMIT
+    assert route.call_count == 1
+    assert sleeps == []
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_complete_timeout_keeps_short_backoff() -> None:
+    calls = {"n": 0}
+
+    def _side(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.TimeoutException("timed out")
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"role": "assistant", "content": "ok"}}]},
+        )
+
+    respx.post(f"{BASE}/chat/completions").mock(side_effect=_side)
+    sleeps: list[float] = []
+
+    async def _sleep(s: float) -> None:
+        sleeps.append(s)
+
+    client = _client(
+        retry=RetryPolicy(max_attempts=1, base_delay_ms=10, jitter=False),
+        budget=RetryBudget(max_attempts=1, max_extra_ms=60_000),
+        sleep=_sleep,
+    )
+    try:
+        resp = await client.complete(LlmRequest(messages=({"role": "user", "content": "x"},)))
+    finally:
+        await client.aclose()
+
+    assert resp.content == "ok"
+    assert sleeps == [0.01]
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,8 @@ async def test_create_zeus_session_success_200(http_client):
     payload = json.loads(route.calls.last.request.content)
     assert payload["contract_id"] == "cid"
     assert payload["conversation"] == [{"role": "user", "content": "hi"}]
+    assert payload["bucket"] == "b"
+    assert payload["scope"] == "s"
 
 
 @pytest.mark.asyncio
@@ -174,6 +176,8 @@ async def test_continue_session_turn_success(http_client):
         {"mode": "auto"},
         [{"role": "assistant", "content": "ok"}],
         HEADERS,
+        bucket="yelp-demo",
+        scope="_default",
     )
     assert status == 200
     assert body["round"] == 2
@@ -183,6 +187,8 @@ async def test_continue_session_turn_success(http_client):
     payload = json.loads(route.calls.last.request.content)
     assert payload["round"] == 2
     assert payload["new_turns"] == [{"role": "assistant", "content": "ok"}]
+    assert payload["bucket"] == "yelp-demo"
+    assert payload["scope"] == "_default"
 
 
 @pytest.mark.asyncio
@@ -273,6 +279,8 @@ async def test_post_session_trace_success(http_client):
         {"status": 200},
         "ok",
         HEADERS,
+        bucket="yelp-demo",
+        scope="_default",
     )
     assert status == 201
     assert body["ok"] is True
@@ -283,6 +291,8 @@ async def test_post_session_trace_success(http_client):
     assert payload["session_id"] == SID
     assert payload["round"] == 2
     assert payload["outcome"] == "ok"
+    assert payload["bucket"] == "yelp-demo"
+    assert payload["scope"] == "_default"
 
 
 @pytest.mark.asyncio

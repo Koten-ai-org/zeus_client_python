@@ -28,6 +28,21 @@ from zeus_client.ports.secrets import SecretStorePort
 __all__ = ["SessionHttpResult", "HttpxSessionClient"]
 
 
+def _trace_scope_fields(target: DataTarget | None) -> dict[str, str]:
+    """Bucket and scope for Debug Sessions.
+
+    Omit both when the caller passed no target. DataTarget's yelp-data
+    default must not be invented on that path.
+    """
+    if target is None:
+        return {}
+    bucket = (target.bucket or "").strip()
+    scope = (target.scope or "").strip()
+    if not bucket or not scope:
+        return {}
+    return {"bucket": bucket, "scope": scope}
+
+
 @dataclass(frozen=True, slots=True)
 class SessionHttpResult:
     ok: bool
@@ -123,6 +138,7 @@ class HttpxSessionClient:
             "chat_request": dict(chat_request or {}),
             "conversation": list(conversation or []),
             **self._sink_stamp(),
+            **_trace_scope_fields(target),
         }
         if rewind:
             payload["rewind"] = True
@@ -207,6 +223,7 @@ class HttpxSessionClient:
             "round": int(client_round),
             "chat_request": dict(chat_request or {}),
             "new_turns": list(new_turns or []),
+            **_trace_scope_fields(target),
         }
         if rewind:
             payload["rewind"] = True
@@ -258,6 +275,7 @@ class HttpxSessionClient:
             "zeus_response": zresp,
             "outcome": outcome or "ok",
             **stamp,
+            **_trace_scope_fields(target),
         }
         tid = (turn_id or "").strip()
         if tid:

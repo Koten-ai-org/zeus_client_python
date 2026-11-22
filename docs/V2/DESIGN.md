@@ -642,12 +642,14 @@ Retries live in **adapters** behind a shared `RetryPolicy`:
 | --- | --- |
 | Idempotent GET / auth mint (carefully) | Exponential backoff + jitter; cap 3 |
 | Zeus tool POST | **Default no retry** (non-idempotent risk); allowlist verbs + explicit `Idempotency-Key` if Zeus supports |
-| LLM 429/503 | Backoff; respect `Retry-After` |
+| LLM `050010` / `050015` / `050016` | Same model call. See the provider window below. |
 | Contract / validation / 4xx tool contract | **Never** retry |
 | Session turn 409 round conflict | Rehydrate once, then fail |
 | Projector / Detective | Soft-fail; never fail the turn |
 
-Budget: `RetryBudget` per turn (max extra ms + max attempts) so retries cannot dominate SLA.
+Provider window for `050010` (rate limit), `050015` (overload), and `050016` (unavailable): retry that same model call. A numeric `Retry-After` is the wait, including 0. It is not jittered and it is not clamped to the transport cap. A non-numeric header is ignored. With no header the wait is 5s, then 10s, then 20s. Three extra attempts. The extra wait on one call stays inside 60 seconds. A header longer than the remaining budget ends the call instead of sleeping part of it. Zeus tool results already in the turn stay, because the wait is inside `complete()`. A timeout (`050005`) keeps the short transport backoff. The baseline suite does not sleep between questions for this. A question is not run only when these retries are exhausted and the turn never reached Zeus.
+
+Budget: `RetryBudget` per turn (max extra ms + max attempts) so retries cannot dominate SLA. The LLM adapter's default extra wait is 60 seconds so the provider window fits. Callers that pass their own `RetryBudget` keep that budget.
 
 ### 4.12 Configuration system
 

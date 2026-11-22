@@ -690,6 +690,7 @@ async def run_agent_turn(
                             mode=settings.mode,
                             rewind=bool(dbg_pol.rewind),
                             turn_id=turn_id,
+                            target=req.target,
                             headers=correlation_headers(
                                 chat_id=chat_id,
                                 turn_id=turn_id,
@@ -1030,6 +1031,7 @@ async def run_agent_turn(
                 mode=settings.mode,
                 rewind=bool(dbg_pol.rewind),
                 turn_id=turn_id,
+                target=req.target,
                 headers=correlation_headers(
                     chat_id=chat_id,
                     turn_id=turn_id,
