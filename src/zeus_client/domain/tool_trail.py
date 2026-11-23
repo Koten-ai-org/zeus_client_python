@@ -8,6 +8,8 @@ from typing import Any
 __all__ = [
     "TRAIL_HEADING",
     "trail_entry_from_hop",
+    "model_facing_line",
+    "model_facing_lines",
     "render_trail_inject",
     "upsert_trail_on_system",
     "error_class_for",
@@ -63,6 +65,30 @@ def trail_entry_from_hop(
         "path": hop.get("url") or hop.get("path") or "",
     }
     return {k: v for k, v in entry.items() if v is not None and v != ""}
+
+
+def model_facing_line(entry: Mapping[str, Any]) -> str:
+    """One hop for the model. req_id stays off this line."""
+    seq = entry.get("seq", "?")
+    l0 = str(entry.get("l0") or entry.get("verb") or "hop")
+    status = "ok" if entry.get("ok") else "fail"
+    hint = entry.get("hint") or ""
+    return f"{seq}. {l0} {status} hint={hint}"
+
+
+def model_facing_lines(
+    entries: Sequence[Mapping[str, Any]],
+    *,
+    max_entries: int = 16,
+) -> list[str]:
+    """Stop after max_entries. Earlier lines stay; later hops are omitted."""
+    cap = max(0, int(max_entries))
+    lines: list[str] = []
+    for entry in entries:
+        if len(lines) >= cap:
+            break
+        lines.append(model_facing_line(entry))
+    return lines
 
 
 def render_trail_inject(entries: Sequence[Mapping[str, Any]], *, max_entries: int = 16) -> str:

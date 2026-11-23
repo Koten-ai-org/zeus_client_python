@@ -99,11 +99,7 @@ from zeus_client.domain.pipeline_bindings import rewrite_fts_ids_to_doc_keys
 from zeus_client.domain.policy import decide_policy
 from zeus_client.domain.session import SessionHandle
 from zeus_client.domain.stamps import product_stamp, resolve_client_ip
-from zeus_client.domain.tool_trail import (
-    render_trail_inject,
-    trail_entry_from_hop,
-    upsert_trail_on_system,
-)
+from zeus_client.domain.tool_trail import model_facing_line, trail_entry_from_hop
 from zeus_client.observability.logging import get_family_logger
 from zeus_client.observability.metrics import MetricsPort
 from zeus_client.ports import AgentMemoryPort, LlmPort, LlmRequest, VerbRequest, ZeusPort
@@ -551,6 +547,8 @@ async def run_agent_turn(
     last_terminate_via: str = "client_terminate"
     rounds_done = 0
     trail: list[dict[str, Any]] = []
+    trail_lines_sent = 0
+    trail_line_cap = int(settings.tool_trail_max_entries or 16)
     skip_loop = bool(mw_ctx.data.get("hooks_must_refuse"))
     if skip_loop:
         notes.append("jailbreak.pre_llm_refuse")
@@ -589,11 +587,6 @@ async def run_agent_turn(
                         ),
                     }
                 )
-            if trail and settings.tool_trail_enabled and settings.tool_trail_inject:
-                snippet = render_trail_inject(
-                    trail, max_entries=int(settings.tool_trail_max_entries or 16)
-                )
-                upsert_trail_on_system(messages, snippet)
             await mw.before_llm(mw_ctx, messages)
             notes.extend(mw_ctx.notes)
             mw_ctx.notes.clear()
@@ -794,7 +787,16 @@ async def run_agent_turn(
             hops.extend(outcome.hops)
             for hop in outcome.hops:
                 empty = bool(hop.get("ok")) and _is_empty_json_value(hop.get("snippet"))
-                trail.append(trail_entry_from_hop(hop, seq=len(trail) + 1, empty=empty))
+                entry = trail_entry_from_hop(hop, seq=len(trail) + 1, empty=empty)
+                trail.append(entry)
+                # One user line per hop. Do not rewrite messages[0] or earlier lines.
+                if (
+                    settings.tool_trail_enabled
+                    and settings.tool_trail_inject
+                    and trail_lines_sent < trail_line_cap
+                ):
+                    messages.append({"role": "user", "content": model_facing_line(entry)})
+                    trail_lines_sent += 1
             steps.extend(outcome.steps)
             notes.extend(mw_ctx.notes)
             mw_ctx.notes.clear()
