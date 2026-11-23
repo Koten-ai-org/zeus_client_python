@@ -1,6 +1,6 @@
 # Jailbreak attempt catalog (V2 client)
 
-**Family SoT:** [`zeus_client_design/docs/JAILBREAK_ATTEMPTS_SECURITY.md`](https://github.com/koten-ai/zeus_client_design/blob/main/docs/JAILBREAK_ATTEMPTS_SECURITY.md)  
+**Family SoT:** [`zeus_client_design/docs/JAILBREAK_ATTEMPTS_SECURITY.md`](https://github.com/Koten-ai-org/zeus_client_design/blob/main/docs/JAILBREAK_ATTEMPTS_SECURITY.md)  
 **Companion to:** [SECURITY.md](./SECURITY.md) §2 (threat model), §8.4 (G2 / policy artifacts), [BASE5_CLIENT.md](../BASE5_CLIENT.md) CHECKLIST C, [BEST_PRACTICES.md](./BEST_PRACTICES.md) §20  
 **Scope:** How an end user (or a sloppy host) would try to jailbreak **this** client — not a generic LLM DAN list, not Zeus-server hardening.  
 **Status:** Control-plane hardening for ZCP-101 is in the package (`security.jailbreak` + `SecurityHooks`). Catalog rows below are the regression oracles; a hit should refuse (except R6–R8 secrets at 0.7). This file tracks the Python implementation; family law and other-language oracles live in the design repo.

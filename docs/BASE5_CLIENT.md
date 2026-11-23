@@ -1,7 +1,7 @@
 # base-5 Client control plane (V2 Runtime)
 
 **Status:** V2 `ZeusRuntime` implements CHECKLIST A/B/C/D at **`candidate`**.  
-**SoT packs:** [zeus_chat_request](https://github.com/koten-ai/zeus_chat_request) `v2/base/base-5.3/` (wire = base-5).  
+**SoT packs:** [zeus_chat_request](https://github.com/Koten-ai-org/zeus_chat_request) `v2/base/base-5.3/` (wire = base-5).  
 **Pin:** production `CURRENT.json` remains **base-1** — do not invent stamps; Hub stamp only.
 
 V1 names (`run_agent`, `load_base_catalog`) are **not** the default package surface. Use `ZeusRuntime` / `rt.catalog` / `rt.agent.run_turn`. Migration aid: `zeus_client.compat.v1`.
@@ -140,7 +140,7 @@ Family [CHECKLIST.md](../../zeus_client_design/CHECKLIST.md) §A–C records the
 - [x] Required four always validated — `test_layer_a.py`, `test_g2_stays_out_of_answer_on_bad_layer_a`
 - [x] G1/G2/G3: G2 never chat UI; raw Layer A in artifacts — `test_ui_view_strips_g2`, turn G2 test
 - [x] AgentHooks baseline (prompt-dump / secrets / denied verbs) — `test_hooks_refuse_prompt_dump`, `test_denied_verb_skips_zeus_and_scores`
-- [x] Jailbreak attempt catalog (ZCP-101): multi-surface score, pre-LLM refuse, tool-JSON sanitize, summary leak, request-rule lock — `tests/unit/security/test_jailbreak.py`, `tests/unit/application/test_jailbreak_turns.py` · family [JAILBREAK_ATTEMPTS_SECURITY.md](https://github.com/koten-ai/zeus_client_design/blob/main/docs/JAILBREAK_ATTEMPTS_SECURITY.md)
+- [x] Jailbreak attempt catalog (ZCP-101): multi-surface score, pre-LLM refuse, tool-JSON sanitize, summary leak, request-rule lock — `tests/unit/security/test_jailbreak.py`, `tests/unit/application/test_jailbreak_turns.py` · family [JAILBREAK_ATTEMPTS_SECURITY.md](https://github.com/Koten-ai-org/zeus_client_design/blob/main/docs/JAILBREAK_ATTEMPTS_SECURITY.md)
 - [x] Dual jailbreak scores; do not overwrite `jail_break_attempt` — `test_policy.py`, `test_hooks_refuse_prompt_dump`
 
 ### E. Conformance & release (Python V2 · candidate · 2.3.0)
