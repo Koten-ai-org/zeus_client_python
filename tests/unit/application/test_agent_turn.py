@@ -171,8 +171,10 @@ async def test_single_tool_then_return_insight():
     assert ret.headers["X-Zeus-Call-Id"] == "c2"
     assert ret.headers["X-Zeus-Turn-Id"] == zeus.calls[0].headers["X-Zeus-Turn-Id"]
     assert ret.headers["X-Zeus-Trace-Class"] == zeus.calls[0].headers["X-Zeus-Trace-Class"]
-    # second LLM call has no tools
+    # second LLM call has no tools; conv id stays the one from the turn
     assert llm.calls[1].tools == ()
+    assert llm.calls[0].conv_id
+    assert llm.calls[0].conv_id == llm.calls[1].conv_id
     assert result.structured is not None
     assert result.structured.policy == "answer"
     assert "wish_i_knew" not in result.answer
@@ -799,10 +801,79 @@ async def test_tool_trail_injects_after_409() -> None:
     assert result.tool_trail
     assert result.tool_trail[0]["req_id"] == "req-409"
     assert result.tool_trail[0]["error_class"] == "contract_mismatch"
-    sys2 = llm.calls[1].messages[0]["content"]
-    assert "ZEUS_TOOL_TRAIL" in sys2
-    assert "do_not_retry_same_args" in sys2
-    assert "Authorization" not in sys2
+    assert llm.calls[0].messages[0]["content"] == llm.calls[1].messages[0]["content"]
+    assert "ZEUS_TOOL_TRAIL" not in llm.calls[1].messages[0]["content"]
+    hint_msgs = [
+        m
+        for m in llm.calls[1].messages[1:]
+        if "do_not_retry_same_args" in str(m.get("content") or "")
+    ]
+    assert len(hint_msgs) == 1
+    assert hint_msgs[0]["role"] == "user"
+    assert hint_msgs[0]["content"] == "1. zeus.search fail hint=do_not_retry_same_args"
+    assert "req_id" not in str(hint_msgs[0]["content"])
+    assert llm.calls[0].tools == llm.calls[1].tools
+    assert llm.calls[0].tools
+    assert llm.calls[0].conv_id
+    assert llm.calls[0].conv_id == llm.calls[1].conv_id
+
+
+@pytest.mark.asyncio
+async def test_tool_trail_stops_at_max_entries() -> None:
+    llm = ScriptedLlm(
+        script=[
+            LlmResponse(content=None, tool_calls=(_tc("search", {"query_text": "a"}, "c1"),)),
+            LlmResponse(content=None, tool_calls=(_tc("search", {"query_text": "b"}, "c2"),)),
+            LlmResponse(content=None, tool_calls=(_tc("search", {"query_text": "c"}, "c3"),)),
+            LlmResponse(content="stopped", tool_calls=()),
+        ]
+    )
+    zeus = ScriptedZeus(
+        results={
+            "search": VerbHopResult(
+                ok=False,
+                status_code=409,
+                req_id="req-409",
+                error="contract mismatch",
+                body={"error": "contract"},
+            )
+        }
+    )
+    result = await run_agent_turn(
+        TurnRequest(
+            message="search fruit beers",
+            tools=({"type": "function", "function": {"name": "search"}},),
+            settings=ClientSettings(
+                ai_process_result=False,
+                max_rounds=4,
+                tool_trail_max_entries=2,
+            ),
+        ),
+        llm=llm,
+        zeus=zeus,
+    )
+    first = "1. zeus.search fail hint=do_not_retry_same_args"
+    second = "2. zeus.search fail hint=do_not_retry_same_args"
+    third = "3. zeus.search fail hint=do_not_retry_same_args"
+
+    def contents(call_index: int) -> list[str]:
+        return [str(m.get("content") or "") for m in llm.calls[call_index].messages]
+
+    assert first in contents(1)
+    assert second not in contents(1)
+    final = contents(-1)
+    assert final.count(first) == 1
+    assert final.count(second) == 1
+    assert third not in final
+    assert first not in str(llm.calls[-1].messages[0]["content"])
+    assert all(
+        call.messages[0]["content"] == llm.calls[0].messages[0]["content"] for call in llm.calls
+    )
+    assert all(call.tools == llm.calls[0].tools for call in llm.calls)
+    assert llm.calls[0].conv_id
+    assert all(call.conv_id == llm.calls[0].conv_id for call in llm.calls)
+    assert len(result.tool_trail) == 3
+    assert all(row["req_id"] == "req-409" for row in result.tool_trail)
 
 
 @pytest.mark.asyncio
