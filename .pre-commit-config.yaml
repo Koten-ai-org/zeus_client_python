@@ -1,0 +1,20 @@
+# Commit-time ruff gate. CI runs the same commands in .github/workflows/ci.yml.
+# Install once: pip install -e ".[dev]" && pre-commit install
+# Fix locally with: make format
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check src tests
+        language: python
+        additional_dependencies: ["ruff>=0.8"]
+        pass_filenames: false
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: ruff format --check src tests
+        language: python
+        additional_dependencies: ["ruff>=0.8"]
+        pass_filenames: false
+        types: [python]

@@ -1,0 +1,6 @@
+# Pull requests that touch these trees need a review from a code owner.
+# The main ruleset requires this review. An author cannot approve their own pull request.
+
+/src/zeus_client/domain/    @geraldarcega @koten-ai
+/src/zeus_client/security/  @geraldarcega @koten-ai
+/src/zeus_client/api/       @geraldarcega @koten-ai

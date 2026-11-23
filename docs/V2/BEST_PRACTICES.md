@@ -384,13 +384,10 @@ demo_yelp smoke against monorepo path
 ### 11.3 Release pipeline
 
 ```text
-full pytest
-build sdist/wheel
-twine check
-tag vX.Y.Z
-publish
-generate SBOM
-GitHub release notes from changelog
+version pull request merged to main
+  pyproject.toml, _version.py, CHANGELOG ## X.Y.Z, pins available_tag vX.Y.Z
+annotated tag vX.Y.Z on that main commit
+workflow: pytest, build, twine check, GitHub Release from changelog, PyPI
 ```
 
 ### 11.4 Branching
@@ -402,7 +399,7 @@ GitHub release notes from changelog
 | `feat/*` | Features from latest tip |
 | `fix/*` | Fixes |
 
-Require PR review for `domain/`, `security/`, public `api/`.
+Require PR review for `domain/`, `security/`, public `api/`. `.github/CODEOWNERS` names those trees. The `main` ruleset (id 27748992) requires that review, one approval, and the CI jobs `ruff`, `mypy`, `pytest (py3.11)`, `pytest (py3.12)`, and `build · twine check`.
 
 ---
 
@@ -416,12 +413,13 @@ Require PR review for `domain/`, `security/`, public `api/`.
 
 Changelog format: Keep a Changelog — categories Added/Changed/Fixed/Security.
 
-Version sync checklist:
+Version sync checklist (`scripts/check_version_clocks.py` enforces the files in CI and on the tag):
 
-- [ ] `pyproject.toml`  
-- [ ] `__version__`  
-- [ ] CHANGELOG  
-- [ ] tag  
+- [ ] `pyproject.toml` `version`
+- [ ] `src/zeus_client/_version.py` `__version__`
+- [ ] CHANGELOG `## X.Y.Z`
+- [ ] `sdk_bootstrap.pins.json` `available_tag` `vX.Y.Z`
+- [ ] annotated tag `vX.Y.Z` on `main`
 
 ---
 
