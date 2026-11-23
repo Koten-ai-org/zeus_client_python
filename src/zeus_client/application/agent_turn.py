@@ -547,8 +547,6 @@ async def run_agent_turn(
     last_terminate_via: str = "client_terminate"
     rounds_done = 0
     trail: list[dict[str, Any]] = []
-    trail_lines_sent = 0
-    trail_line_cap = int(settings.tool_trail_max_entries or 16)
     skip_loop = bool(mw_ctx.data.get("hooks_must_refuse"))
     if skip_loop:
         notes.append("jailbreak.pre_llm_refuse")
@@ -789,14 +787,9 @@ async def run_agent_turn(
                 empty = bool(hop.get("ok")) and _is_empty_json_value(hop.get("snippet"))
                 entry = trail_entry_from_hop(hop, seq=len(trail) + 1, empty=empty)
                 trail.append(entry)
-                # One user line per hop. Do not rewrite messages[0] or earlier lines.
-                if (
-                    settings.tool_trail_enabled
-                    and settings.tool_trail_inject
-                    and trail_lines_sent < trail_line_cap
-                ):
+                cap = int(settings.tool_trail_max_entries or 16)
+                if settings.tool_trail_enabled and settings.tool_trail_inject and len(trail) <= cap:
                     messages.append({"role": "user", "content": model_facing_line(entry)})
-                    trail_lines_sent += 1
             steps.extend(outcome.steps)
             notes.extend(mw_ctx.notes)
             mw_ctx.notes.clear()

@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import Any
 
 __all__ = [
-    "TRAIL_HEADING",
     "trail_entry_from_hop",
     "model_facing_line",
-    "model_facing_lines",
-    "render_trail_inject",
-    "upsert_trail_on_system",
     "error_class_for",
 ]
-
-TRAIL_HEADING = "ZEUS_TOOL_TRAIL (this turn):"
 
 
 def error_class_for(*, ok: bool, status: int, error: str | None = None) -> str | None:
@@ -74,52 +68,3 @@ def model_facing_line(entry: Mapping[str, Any]) -> str:
     status = "ok" if entry.get("ok") else "fail"
     hint = entry.get("hint") or ""
     return f"{seq}. {l0} {status} hint={hint}"
-
-
-def model_facing_lines(
-    entries: Sequence[Mapping[str, Any]],
-    *,
-    max_entries: int = 16,
-) -> list[str]:
-    """Stop after max_entries. Earlier lines stay; later hops are omitted."""
-    cap = max(0, int(max_entries))
-    lines: list[str] = []
-    for entry in entries:
-        if len(lines) >= cap:
-            break
-        lines.append(model_facing_line(entry))
-    return lines
-
-
-def render_trail_inject(entries: Sequence[Mapping[str, Any]], *, max_entries: int = 16) -> str:
-    rows = list(entries)[: max(0, int(max_entries))]
-    if not rows:
-        return ""
-    lines = [TRAIL_HEADING]
-    for e in rows:
-        bits = [f"{e.get('seq', '?')}.", str(e.get("l0") or e.get("verb") or "hop")]
-        bits.append("ok" if e.get("ok") else "fail")
-        if e.get("req_id"):
-            bits.append(f"req_id={e['req_id']}")
-        if e.get("error_class"):
-            bits.append(e["error_class"])
-        if e.get("hint"):
-            bits.append(f"hint={e['hint']}")
-        lines.append(" ".join(bits))
-    return "\n".join(lines)
-
-
-def upsert_trail_on_system(messages: list[dict[str, Any]], snippet: str) -> None:
-    """Splices trail into the system message (Bag B). Never touches the user text."""
-    if not snippet or not messages:
-        return
-    sys = messages[0]
-    if not isinstance(sys, dict) or sys.get("role") != "system":
-        return
-    content = str(sys.get("content") or "")
-    if TRAIL_HEADING in content:
-        head, _sep, _rest = content.partition(TRAIL_HEADING)
-        # drop previous trail block through end (trail is last inject)
-        sys["content"] = head.rstrip() + "\n\n" + snippet
-    else:
-        sys["content"] = content.rstrip() + "\n\n" + snippet
