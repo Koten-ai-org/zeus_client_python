@@ -7,14 +7,14 @@ description: Demo Builder Kit — build vertical Zeus demos with kotenai-zeus-cl
 **Status**: Active (ported)  
 **Kit version**: 0.1.0  
 **Date**: 2026-07-15  
-**Package**: [`kotenai-zeus-client`](https://github.com/koten-ai/zeus_client_python)
+**Package**: [`kotenai-zeus-client`](https://github.com/Koten-ai-org/zeus_client_python)
 
 AI-executable documentation to build vertical demos like **TravelPlan** (`demo_travel_sample`) on top of this library.
 
 {% hint style="info" %}
 **Primary home:** this tree (`docs/demo-builder/` in `zeus_client_python`).  
 **GitBook:** site section **Demo** → variant **Python** (space path `demo/python`).  
-**Reference app:** monorepo sibling `demo_travel_sample` or [TravelPlan README](https://github.com/koten-ai/demo_travel_sample) when published.
+**Reference app:** monorepo sibling `demo_travel_sample` or [TravelPlan README](https://github.com/Koten-ai-org/demo_travel_sample) when published.
 {% endhint %}
 
 ## Who this is for

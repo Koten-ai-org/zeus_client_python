@@ -233,7 +233,7 @@ If suite id/name differs in design repo, **use design SoT**, not this draft.
 ```markdown
 ## MATRIX honesty for kotenai-zeus-client 2.0.0
 
-Package: https://github.com/koten-ai/zeus_client_python @ v2.0.0 (<sha>)
+Package: https://github.com/Koten-ai-org/zeus_client_python @ v2.0.0 (<sha>)
 Epic: ZCP-33 · handoff: ZCP-43
 Claim path: B1 candidate | B2 supported  (pick one)
 

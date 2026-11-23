@@ -5,7 +5,7 @@
 
 This package does **not** embed the job engine. Mode 1 (`rt.agent`) and Mode 2 (`rt.data`) stay the only Zeus tool planes. Mode 3 is optional: `rt.units.*` wraps those planes with isolation; `rt.jobs.*` is a port. Production adapter is HTTP/SSE to a sidecar (Pattern B). Do not vendor Go into the Python wheel.
 
-Family SoT: `zeus_client_design/docs/multi_agent/*` · `guides/api/API_JOBS.md` · `API_UNITS.md` · `API_CONFIG.md` §7.6 · setup runbook [MULTI_AGENT_EXAMPLE.md §0](https://github.com/koten-ai/zeus_client_design/blob/main/docs/multi_agent/MULTI_AGENT_EXAMPLE.md#0-multi-agent-setup-checklist-runbook) · fruit-beer example in the same file.
+Family SoT: `zeus_client_design/docs/multi_agent/*` · `guides/api/API_JOBS.md` · `API_UNITS.md` · `API_CONFIG.md` §7.6 · setup runbook [MULTI_AGENT_EXAMPLE.md §0](https://github.com/Koten-ai-org/zeus_client_design/blob/main/docs/multi_agent/MULTI_AGENT_EXAMPLE.md#0-multi-agent-setup-checklist-runbook) · fruit-beer example in the same file.
 
 ---
 
@@ -95,7 +95,7 @@ Client half (ZCF-043):
 
 - Log / journal **`llm.role` + `llm.model` + `api_key_env` name** on unit start.
 - When the worker LLM returns usage, copy it to `UnitResult.artifacts["usage"]` (prompt/completion/total). Omit when empty.
-- Prefer doing **less** work over micro-tuning latency — family [MULTI_AGENT_OPTIMIZATION.md](https://github.com/koten-ai/zeus_client_design/blob/main/docs/multi_agent/MULTI_AGENT_OPTIMIZATION.md). Prefer `zeus_direct` when the unit is pure data; default `ai_process_result=false` on cheap paths.
+- Prefer doing **less** work over micro-tuning latency — family [MULTI_AGENT_OPTIMIZATION.md](https://github.com/Koten-ai-org/zeus_client_design/blob/main/docs/multi_agent/MULTI_AGENT_OPTIMIZATION.md). Prefer `zeus_direct` when the unit is pure data; default `ai_process_result=false` on cheap paths.
 
 Orchestrator / advisor LLMs are **not** called by this package (sidecar owns them). Python resolves and forwards `config.llm.roles` / `jobs.run(models=)`.
 
