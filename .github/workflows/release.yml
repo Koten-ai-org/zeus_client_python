@@ -1,8 +1,10 @@
 # Tag-driven release for kotenai-zeus-client.
-# Usage (human only — aligns with ZCP-43 / T9):
-#   1. Bump version clocks + CHANGELOG on a PR; merge to main
-#   2. git tag vX.Y.Z && git push origin vX.Y.Z
-#   3. This workflow builds, checks, attaches artifacts; optional PyPI later
+# Usage (human only):
+#   1. Pull request: set the same version in pyproject.toml, _version.py,
+#      CHANGELOG.md (## X.Y.Z), and sdk_bootstrap.pins.json available_tag (vX.Y.Z).
+#      Merge to main and wait until CI is green.
+#   2. git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+#   3. This workflow checks the tag, tests, builds, and publishes.
 name: Release
 
 on:
@@ -75,13 +77,22 @@ jobs:
             v*) VER="${TAG#v}" ;;
             *) echo "tag must start with v"; exit 1 ;;
           esac
-          PY_VER=$(python -c "import pathlib,re; t=pathlib.Path('pyproject.toml').read_text(); print(re.search(r'^version\s*=\s*\"([^\"]+)\"', t, re.M).group(1))")
-          IMP_VER=$(python -c "from pathlib import Path; ns={}; exec(Path('src/zeus_client/_version.py').read_text(), ns); print(ns['__version__'])")
+          python scripts/check_version_clocks.py --tag "$TAG"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          echo "Resolved tag=$TAG pyproject=$PY_VER _version=$IMP_VER"
-          test "$VER" = "$PY_VER"
-          test "$VER" = "$IMP_VER"
+
+      - name: Tag is annotated and on main
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.ver.outputs.tag }}"
+          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          git fetch origin main:refs/remotes/origin/main
+          TYPE=$(git cat-file -t "refs/tags/${TAG}")
+          if [ "$TYPE" != "tag" ]; then
+            echo "tag ${TAG} is a ${TYPE}; create an annotated tag with: git tag -a ${TAG} -m ${TAG}" >&2
+            exit 1
+          fi
+          git merge-base --is-ancestor "refs/tags/${TAG}^{commit}" refs/remotes/origin/main
 
       - name: Full offline suite
         run: |

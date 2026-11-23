@@ -633,6 +633,7 @@ twine upload dist/*
 
 ```bash
 pip install -e ".[dev]"
+make hooks       # ruff check and ruff format --check on each commit
 make ci          # ruff + mypy + pytest/cov + build/twine
 ```
 
@@ -644,8 +645,13 @@ GitHub Actions (`.github/workflows/`):
 | `release.yml` | tag `v*` | Build, GitHub Release, PyPI Trusted Publishing |
 | `integration.yml` | manual | Lab-only (non-blocking stub) |
 
-Release (human): bump version clocks + CHANGELOG → merge → `git tag vX.Y.Z && git push origin vX.Y.Z`.  
-Do not self-award MATRIX / claim `supported` from CI green alone. `pip-audit` stays non-blocking for 2.0.0. ZCP-44 tracks the blocking job for 2.0.1 and does not block T5, T8, or T9.
+Release (human): open a pull request that sets one version in all four clocks: `pyproject.toml`, `src/zeus_client/_version.py`, a `## X.Y.Z` section in `CHANGELOG.md`, and `sdk_bootstrap.pins.json` `available_tag` (`vX.Y.Z`). Merge it. After CI is green on `main`, push an annotated tag:
+
+```bash
+git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z
+```
+
+That tag runs `release.yml` (tests, GitHub Release, PyPI). Do not self-award MATRIX / claim `supported` from CI green alone. `pip-audit` stays non-blocking for 2.0.0. ZCP-44 tracks the blocking job for 2.0.1 and does not block T5, T8, or T9.
 
 ## License
 
