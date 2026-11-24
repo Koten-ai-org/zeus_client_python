@@ -82,4 +82,4 @@ def test_each_clock_mismatch_fails(tmp_path: Path) -> None:
 def test_repo_clocks_match() -> None:
     result = _run(root=ROOT)
     assert result.returncode == 0, result.stderr
-    assert "2.5.4" in result.stdout
+    assert "2.5.5" in result.stdout
