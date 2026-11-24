@@ -2,9 +2,26 @@
 
 ## Unreleased
 
+---
+
+## 2.5.5 — 2026-11-24
+
 ### Fixed
 
+- An FTS search step is a doc-key producer. `@step.ids` inside later pipeline steps becomes `@step.doc_keys` before the pipeline POST and before the hop is recorded. `order` and `set` that carry those keys become producers too, so a following `@ranked.ids` becomes `@ranked.doc_keys`. Hybrid, find, vector, `@step.node_ids`, and an existing `@step.doc_keys` stay. The user-facing summary is not rewritten. (ZCP-133)
 - LLM `050010` (rate limit), `050015` (overload), and `050016` (unavailable) retry that same model call. `Retry-After` is the wait when the provider sends a number of seconds. Without that header the wait is 5s, then 10s, then 20s. Three extra attempts. The extra wait on one call stays inside 60 seconds. A header longer than the remaining budget ends the call. Zeus tool results already in the turn stay. A timeout (`050005`) still uses the short transport backoff. The question is not run only when those retries are exhausted and the turn never reached Zeus. (ZCP-134)
+- `POST /v2/session` retries exactly once when Zeus returns HTTP 409 or HTTP 500. The retry sends the same URL, headers, and payload. Zeus still mints the session id. Any other status, including a transport failure, is a single attempt. `continue_turn` and `post_trace` are unchanged. When both create attempts fail, the client returns the last result so session lifecycle can clear the stored session id. (ZCP-136)
+
+### Added
+
+- A terminating `return` or `return_result` with a non-empty summary is POSTed once to `/v2/return`. A missing or blank summary stays local. A transport error on that post leaves the turn OK and keeps the summary as the answer. An HTTP 4xx or 5xx hop is recorded and does not fail the turn. HTTP 429 `session_force_closed` drops the cached basic login for that endpoint, bucket, and scope. That call is not retried and is not force-minted. PAT and M2M caches stay. A 429 without that token keeps the cache. (ZCP-135)
+
+### Changed
+
+- Tool hops no longer rewrite the system message. Each hop is appended as its own user line, for example `1. zeus.search ok hint=success`. `req_id` stays on the structured trail and stays off that line. The trail stops at `tool_trail_max_entries` (default 16) without deleting earlier lines. (ZCP-137)
+- Published GitHub links use `https://github.com/Koten-ai-org/`. (ZCP-138)
+- A release is a pull request that sets one version in the four clocks, then an annotated tag on `main`. The tag workflow checks the clocks, rejects a lightweight tag, and publishes. A merge does not publish. (ZCP-139)
+- The available Zeus 1.0.0 client package is `kotenai-zeus-client` tag `v2.5.5`. `v2.5.4` is the previous tag. Auth on `v2.5.5` is `basic`, `bearer`, and `session`. PAT and M2M stay disabled (ZCP-124).
 
 ---
 
